@@ -68,7 +68,7 @@ else
     twurl -d "status=$tweet" /1.1/statuses/update.json > $aprsCall-lastTweet.json
 
     # parse tweet reply JSON and echo to console the time of tweet
-    lastTweet=$(cat $aprsCalllastTweet.json | jq --raw-output '.created_at')
+    lastTweet=$(cat $aprsCall-lastTweet.json | jq --raw-output '.created_at')
     echo "Tweet sucessfully sent $lastTweet"
 
     # save current APRS data as last APRS (for checking time and posit against later

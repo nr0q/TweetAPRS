@@ -8,12 +8,11 @@
 # note: all console output will actually be saved to TweetAPRS.log when executed by cron
 
 # set a few important vars
-aprsCall="APRS-CALLSIGN"
-aprsApiKey="APRS.FI_API_KEY"
-hereAppID="HERE_GEOLOCATE_APP_ID"
-hereAppCode="HERE_GEOLOCATE_APP_CODE"
-wu_ApiKey="WEATHER_UNDERGROUND_API_KEY"
-bitly_token="BITLY_GENERIC_TOKEN"
+aprsCall="APRS Callsign"
+aprsApiKey="APRS.fi API Key"
+hereApiKey="here Geocode API Key"
+wx_ApiKey="Open Weather Maps API Key"
+bitly_token="Bitly Generic API Token"
 
 # print start date/time of processing to console
 startTime=$(date)
@@ -46,12 +45,23 @@ else
 
     else
     # cURL get a landmark near me
-    curl -s -X GET -H "Content-Type: *" --get "https://reverse.geocoder.api.here.com/6.2/reversegeocode.json" \
-    --data-urlencode "prox=$lat,$lng,5000" --data-urlencode "mode=retrieveLandmarks" \
-    --data-urlencode "app_id=$hereAppID" --data-urlencode "app_code=$hereAppCode" --data-urlencode "gen=8" > $aprsCall-myLndMrk.json
+    curl -s -X GET -H "Content-Type: *" --get "https://reverse.geocoder.ls.hereapi.com/6.2/reversegeocode.json" \
+	--data-urlencode "prox=$lat,$lng,5000" --data-urlencode "mode=retrieveLandmarks" \
+	--data-urlencode "apiKey=$hereApiKey" --data-urlencode "gen=8" > $aprsCall-myLndMrk.json
 
     # parse landmark JSON out and save landmark name into string variable
     landmark=$(cat $aprsCall-myLndMrk.json | jq '.Response.View[0].Result[0].Location.Name')
+
+    # get city and state from location
+    curl -s -X GET -H "Content-Type: *" --get "https://reverse.geocoder.ls.hereapi.com/6.2/reversegeocode.json" \
+	--data-urlencode "prox=$lat,$lng,250" --data-urlencode "mode=retrieveAddresses" \
+	--data-urlencode "maxresults=1" --data-urlencode "apiKey=$hereApiKey" \
+	--data-urlencode "gen=8" > $aprsCall-myLocation.json
+
+    landmark_state=$(cat $aprsCall-myLocation.json | jq --raw-output '.Response.View[0].Result[0].Location.Address.State')
+    landmark_city=$(cat $aprsCall-myLocation.json | jq --raw-output '.Response.View[0].Result[0].Location.Address.City')
+    landmark_city_noWhiteSpace=$(echo "${landmark_city// /_}")
+
 
     # neatly format time into something pretty
     dispTime=$(echo ${time:0:2}:${time:2:2}:${time:4:2})
@@ -61,7 +71,7 @@ else
     status=$(cat $aprsCall-myAPRS.json | jq --raw-output '.entries[0].status')
 
     # concatonate string variables togeather to make up the location tweet
-    tweet=$(echo $name is passing by $landmark with status $status 'http://tinyurl.com/dxja8qt #TweetAPRS #hamr')
+    tweet=$(echo $name is passing by $landmark in $landmark_city, $landmark_state with status $status 'http://tinyurl.com/dxja8qt #TweetAPRS #hamr')
     echo $tweet
 
     # send location tweet using twurl
@@ -77,36 +87,23 @@ else
     fi
 fi
 # wx tweet logic
-gtouch -d '-1 hour' $aprsCall-last_WXcheck
+touch -d '-1 hour' $aprsCall-last_WXcheck
 if [ $aprsCall-last_WXcheck -nt $aprsCall-last_WXtweet ]
 then
-    # get city and state from location
-curl -s -X GET -H "Content-Type: *" --get "https://reverse.geocoder.api.here.com/6.2/reversegeocode.json" \
---data-urlencode "prox=$lat,$lng,250" --data-urlencode "mode=retrieveAddresses" \
---data-urlencode "maxresults=1" --data-urlencode "app_id=$hereAppID" --data-urlencode "app_code=$hereAppCode" \
---data-urlencode "gen=8" > $aprsCall-myLocation.json
-
-    landmark_state=$(cat $aprsCall-myLocation.json | jq --raw-output '.Response.View[0].Result[0].Location.Address.State')
-    landmark_city=$(cat $aprsCall-myLocation.json | jq --raw-output '.Response.View[0].Result[0].Location.Address.City')
-    landmark_city_noWhiteSpace=$(echo "${landmark_city// /_}")
 
     # get weather from that location
-    curl -s "http://api.wunderground.com/api/$wu_ApiKey/conditions/q/$landmark_state/$landmark_city_noWhiteSpace.json" > $aprsCall-myWX.json
+    curl -G -s "https://api.openweathermap.org/data/2.5/weather" \
+	--data-urlencode "lat=$lat" --data-urlencode "lon=$lng" --data-urlencode "units=imperial" --data-urlencode "APPID=$wx_ApiKey"> $aprsCall-myWX.json
 
     # parse weather strings into string variables
-    weather=$(cat $aprsCall-myWX.json | jq --raw-output '.current_observation.weather')
-    temp=$(cat $aprsCall-myWX.json | jq --raw-output '.current_observation.temp_f')
-    windString=$(cat $aprsCall-myWX.json | jq --raw-output '.current_observation.wind_string')
-    baro_pres=$(cat $aprsCall-myWX.json | jq --raw-output '.current_observation.pressure_in')
-    precip_today=$(cat $aprsCall-myWX.json | jq --raw-output '.current_observation.precip_today_in')
-    ob_url=$(cat $aprsCall-myWX.json | jq --raw-output '.current_observation.ob_url')
-
-    # shorten ob_url with bit.ly
-    ob_ShortURL=$(curl -s -X GET --get "https://api-ssl.bitly.com/v3/shorten" --data-urlencode "access_token=$bitly_token" \
---data-urlencode "longUrl=$ob_url" --data-urlencode "format=txt")
+    weather=$(cat $aprsCall-myWX.json | jq --raw-output '.weather[0].main')
+    temp=$(cat $aprsCall-myWX.json | jq --raw-output '.main.temp')
+    windSpeed=$(cat $aprsCall-myWX.json | jq --raw-output '.wind.speed')
+    windDir=$(cat $aprsCall-myWX.json | jq --raw-output '.wind.deg')
+    baro_pres=$(cat $aprsCall-myWX.json | jq --raw-output '.main.pressure')
 
     # build WX tweet
-    wxTweet=$(echo "Current WX at $aprsCall is $weather Temp $temp F Wind $windString Baro $baro_pres Precip $precip_today in. $ob_ShortURL #TweetAPRS #hamr")
+    wxTweet=$(echo "Current WX at $aprsCall is $weather Temp $temp F, Wind $windSpeed MPH at $windDir Deg, Baro $baro_pres hPa #TweetAPRS #hamr")
     echo $wxTweet
 
     # send wx tweet
